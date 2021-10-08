@@ -1,7 +1,7 @@
 package mp4io
 
 import (
-	"github.com/nareix/joy4/utils/bits/pio"
+	"github.com/mattj103/joy4/utils/bits/pio"
 )
 
 type TypeIndicator struct {
