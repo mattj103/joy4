@@ -16,6 +16,7 @@ type Muxer struct {
 	w          io.WriteSeeker
 	bufw       *bufio.Writer
 	wpos       int64
+	mdatpos	   int64
 	streams    []*Stream
 }
 
@@ -109,7 +110,7 @@ func (self *Stream) fillTrackAtom() (err error) {
 			Conf:                 &mp4io.AVC1Conf{Data: codec.AVCDecoderConfRecordBytes()},
 		}
 		self.trackAtom.Media.Handler = &mp4io.HandlerRefer{
-			SubType: [4]byte{'v','i','d','e'},
+			Type: [4]byte{'v','i','d','e'},
 			Name:    []byte("Video Media Handler"),
 		}
 		self.trackAtom.Media.Info.Video = &mp4io.VideoMediaInfo{
@@ -132,8 +133,8 @@ func (self *Stream) fillTrackAtom() (err error) {
 		self.trackAtom.Header.Volume = 1
 		self.trackAtom.Header.AlternateGroup = 1
 		self.trackAtom.Media.Handler = &mp4io.HandlerRefer{
-			SubType: [4]byte{'s','o','u','n'},
-			Name:    []byte("Sound Handler"),
+			Type: [4]byte{'s','o','u','n'},
+			Name:    []byte("SoundHandler"),
 		}
 		self.trackAtom.Media.Info.Sound = &mp4io.SoundMediaInfo{}
 
@@ -151,6 +152,18 @@ func (self *Muxer) WriteHeader(streams []av.CodecData) (err error) {
 			return
 		}
 	}
+
+	ftype := []byte{0,0,0,0}
+	ftype = append(ftype, []byte("ftyp")...)
+	ftype = append(ftype, []byte("isom")...)
+	ftype = append(ftype, []byte{0,0,2,0}...)
+	ftype = append(ftype, []byte{0x69, 0x73, 0x6F, 0x6D, 0x69, 0x73, 0x6F, 0x32, 0x61, 0x76, 0x63, 0x31, 0x6D, 0x70, 0x34, 0x31}...)
+	pio.PutU32BE(ftype, uint32(len(ftype)))
+	if _, err = self.w.Write(ftype); err != nil {
+		return
+	}
+	self.wpos += int64(len(ftype))
+	self.mdatpos = int64(len(ftype))
 
 	taghdr := make([]byte, 8)
 	pio.PutU32BE(taghdr[4:], uint32(mp4io.MDAT))
@@ -236,6 +249,29 @@ func (self *Muxer) WriteTrailer() (err error) {
 		NextTrackId:     2,
 	}
 
+	data := []byte{}
+	for j := 0; j < 256; j++ {
+		data = append(data, byte(0x20))
+	}
+	moov.Userdata = &mp4io.UserData{
+		List: []mp4io.Atom{&mp4io.MetaData{
+			Items: &mp4io.MetaDataItemList{
+				List: map[string]*mp4io.MetaDataItem{
+					string([]byte{169, 99, 109, 116}): &mp4io.MetaDataItem{
+						Data: data,
+						Type: 1,
+						Locale: 0,
+					},
+				},
+			},
+			Handler: &mp4io.HandlerRefer{
+				Type: [4]byte{'m','d','i','r'},
+				SubType: [4]byte{'a','p','p','l'},
+				Name: []byte{},
+			},
+		}},
+	}
+
 	maxDur := time.Duration(0)
 	timeScale := int64(10000)
 	for _, stream := range self.streams {
@@ -260,11 +296,11 @@ func (self *Muxer) WriteTrailer() (err error) {
 	if mdatsize, err = self.w.Seek(0, 1); err != nil {
 		return
 	}
-	if _, err = self.w.Seek(0, 0); err != nil {
+	if _, err = self.w.Seek(self.mdatpos, 0); err != nil {
 		return
 	}
 	taghdr := make([]byte, 4)
-	pio.PutU32BE(taghdr, uint32(mdatsize))
+	pio.PutU32BE(taghdr, uint32(mdatsize - self.mdatpos))
 	if _, err = self.w.Write(taghdr); err != nil {
 		return
 	}

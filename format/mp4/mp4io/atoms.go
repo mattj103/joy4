@@ -207,6 +207,7 @@ type Movie struct {
 	Header		*MovieHeader
 	MovieExtend	*MovieExtend
 	Tracks		[]*Track
+	Userdata	*UserData
 	Unknowns	[]Atom
 	AtomPos
 }
@@ -227,6 +228,9 @@ func (self Movie) marshal(b []byte) (n int) {
 	for _, atom := range self.Tracks {
 		n += atom.Marshal(b[n:])
 	}
+	if self.Userdata != nil {
+		n += self.Userdata.Marshal(b[n:])
+	}
 	for _, atom := range self.Unknowns {
 		n += atom.Marshal(b[n:])
 	}
@@ -242,6 +246,9 @@ func (self Movie) Len() (n int) {
 	}
 	for _, atom := range self.Tracks {
 		n += atom.Len()
+	}
+	if self.Userdata != nil {
+		n += self.Userdata.Len()
 	}
 	for _, atom := range self.Unknowns {
 		n += atom.Len()
@@ -259,6 +266,15 @@ func (self *Movie) Unmarshal(b []byte, offset int) (n int, err error) {
 			return
 		}
 		switch tag {
+		case UDTA:
+			{
+				atom := &UserData{}
+				if _, err = atom.Unmarshal(b[n:n+size], offset+n); err != nil {
+					err = parseErr("mvhd", n+offset, err)
+					return
+				}
+				self.Userdata = atom
+			}
 		case MVHD:
 			{
 				atom := &MovieHeader{}
@@ -309,6 +325,9 @@ func (self Movie) Children() (r []Atom) {
 	}
 	for _, atom := range self.Tracks {
 		r = append(r, atom)
+	}
+	if self.Userdata != nil {
+		r = append(r, self.Userdata)
 	}
 	r = append(r, self.Unknowns...)
 	return
@@ -778,12 +797,20 @@ func (self HandlerRefer) marshal(b []byte) (n int) {
 	n += 1
 	pio.PutU24BE(b[n:], self.Flags)
 	n += 3
+	pio.PutU32BE(b[4:], uint32(0))
+	n += 4
 	copy(b[n:], self.Type[:])
 	n += len(self.Type[:])
 	copy(b[n:], self.SubType[:])
 	n += len(self.SubType[:])
+	pio.PutU32BE(b[4:], uint32(0))
+	n += 4
+	pio.PutU32BE(b[4:], uint32(0))
+	n += 4
 	copy(b[n:], self.Name[:])
 	n += len(self.Name[:])
+	pio.PutU8(b[n:], 0)
+	n += 1
 	return
 }
 func (self HandlerRefer) Len() (n int) {
@@ -791,8 +818,11 @@ func (self HandlerRefer) Len() (n int) {
 	n += 1
 	n += 3
 	n += len(self.Type[:])
+	n += 4
 	n += len(self.SubType[:])
+	n += 8
 	n += len(self.Name[:])
+	n += 1
 	return
 }
 func (self *HandlerRefer) Unmarshal(b []byte, offset int) (n int, err error) {
@@ -810,10 +840,12 @@ func (self *HandlerRefer) Unmarshal(b []byte, offset int) (n int, err error) {
 	}
 	self.Flags = pio.U24BE(b[n:])
 	n += 3
+	n += 4
 	if len(b) < n+len(self.Type) {
 		err = parseErr("Type", n+offset, err)
 		return
 	}
+	n += 8
 	copy(self.Type[:], b[n:])
 	n += len(self.Type)
 	if len(b) < n+len(self.SubType) {
@@ -822,8 +854,9 @@ func (self *HandlerRefer) Unmarshal(b []byte, offset int) (n int, err error) {
 	}
 	copy(self.SubType[:], b[n:])
 	n += len(self.SubType)
-	self.Name = b[n:]
+	self.Name = b[n:(len(b) - 1)]
 	n += len(b[n:])
+	n += 1
 	return
 }
 func (self HandlerRefer) Children() (r []Atom) {
